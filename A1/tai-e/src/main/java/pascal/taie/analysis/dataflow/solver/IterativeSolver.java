@@ -26,6 +26,11 @@ import pascal.taie.analysis.dataflow.analysis.DataflowAnalysis;
 import pascal.taie.analysis.dataflow.fact.DataflowResult;
 import pascal.taie.analysis.graph.cfg.CFG;
 
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+
 class IterativeSolver<Node, Fact> extends Solver<Node, Fact> {
 
     public IterativeSolver(DataflowAnalysis<Node, Fact> analysis) {
@@ -39,6 +44,20 @@ class IterativeSolver<Node, Fact> extends Solver<Node, Fact> {
 
     @Override
     protected void doSolveBackward(CFG<Node> cfg, DataflowResult<Node, Fact> result) {
-        // TODO - finish me
+        boolean changed = true;
+        while (changed) {
+            changed = false;
+            for (Node node : cfg) {
+                // OUT[B] = ∪ IN[S] for all successors S
+                Fact outFact = result.getOutFact(node);
+                for (Node succ : cfg.getSuccsOf(node)) {
+                    analysis.meetInto(result.getInFact(succ), outFact);
+                }
+                // IN[B] = use_B ∪ (OUT[B] - def_B)
+                if (analysis.transferNode(node, result.getInFact(node), outFact)) {
+                    changed = true;
+                }
+            }
+        }
     }
 }
