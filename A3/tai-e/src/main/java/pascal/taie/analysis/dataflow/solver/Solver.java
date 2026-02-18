@@ -77,11 +77,27 @@ public abstract class Solver<Node, Fact> {
     }
 
     protected void initializeForward(CFG<Node> cfg, DataflowResult<Node, Fact> result) {
-        // TODO - finish me
+        // forward
+        Node entry = cfg.getEntry();
+        result.setInFact(entry, analysis.newInitialFact());
+        result.setOutFact(entry, analysis.newInitialFact());
+        for (Node node : cfg) {
+            if (node == entry) continue;
+            result.setInFact(node, analysis.newBoundaryFact(cfg));
+            result.setOutFact(node, analysis.newBoundaryFact(cfg));
+        }
     }
 
     protected void initializeBackward(CFG<Node> cfg, DataflowResult<Node, Fact> result) {
-        // TODO - finish me
+        // backward
+        Node exit = cfg.getExit();
+        result.setInFact(exit, analysis.newInitialFact());
+        result.setOutFact(exit, analysis.newInitialFact());
+        for (Node node : cfg) {
+            if (node == exit) continue;
+            result.setInFact(node, analysis.newBoundaryFact(cfg));
+            result.setOutFact(node, analysis.newBoundaryFact(cfg));
+        }
     }
 
     /**

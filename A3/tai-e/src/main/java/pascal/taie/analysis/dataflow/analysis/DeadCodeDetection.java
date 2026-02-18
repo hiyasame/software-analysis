@@ -33,21 +33,19 @@ import pascal.taie.analysis.graph.cfg.CFGBuilder;
 import pascal.taie.analysis.graph.cfg.Edge;
 import pascal.taie.config.AnalysisConfig;
 import pascal.taie.ir.IR;
-import pascal.taie.ir.exp.ArithmeticExp;
-import pascal.taie.ir.exp.ArrayAccess;
-import pascal.taie.ir.exp.CastExp;
-import pascal.taie.ir.exp.FieldAccess;
-import pascal.taie.ir.exp.NewExp;
-import pascal.taie.ir.exp.RValue;
-import pascal.taie.ir.exp.Var;
+import pascal.taie.ir.exp.*;
 import pascal.taie.ir.stmt.AssignStmt;
 import pascal.taie.ir.stmt.If;
 import pascal.taie.ir.stmt.Stmt;
 import pascal.taie.ir.stmt.SwitchStmt;
+import pascal.taie.util.collection.Pair;
+import pascal.taie.util.graph.AbstractEdge;
 
 import java.util.Comparator;
+import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.stream.Collectors;
 
 public class DeadCodeDetection extends MethodAnalysis {
 
@@ -59,18 +57,97 @@ public class DeadCodeDetection extends MethodAnalysis {
 
     @Override
     public Set<Stmt> analyze(IR ir) {
-        // obtain CFG
         CFG<Stmt> cfg = ir.getResult(CFGBuilder.ID);
-        // obtain result of constant propagation
-        DataflowResult<Stmt, CPFact> constants =
-                ir.getResult(ConstantPropagation.ID);
-        // obtain result of live variable analysis
-        DataflowResult<Stmt, SetFact<Var>> liveVars =
-                ir.getResult(LiveVariableAnalysis.ID);
-        // keep statements (dead code) sorted in the resulting set
+        DataflowResult<Stmt, CPFact> constants = ir.getResult(ConstantPropagation.ID);
+        DataflowResult<Stmt, SetFact<Var>> liveVars = ir.getResult(LiveVariableAnalysis.ID);
         Set<Stmt> deadCode = new TreeSet<>(Comparator.comparing(Stmt::getIndex));
-        // TODO - finish me
-        // Your task is to recognize dead code in ir and add it to deadCode
+
+        // 1. Reachability Analysis
+        Set<Stmt> reachable = new java.util.HashSet<>();
+        java.util.Queue<Stmt> queue = new java.util.LinkedList<>();
+
+        Stmt entry = cfg.getEntry();
+        if (entry != null) {
+            reachable.add(entry);
+            queue.add(entry);
+        }
+
+        while (!queue.isEmpty()) {
+            Stmt curr = queue.poll();
+            Set<Edge<Stmt>> outEdges = cfg.getOutEdgesOf(curr);
+            Value val = Value.getNAC();
+            if (curr instanceof If ifStmt) {
+                val = ConstantPropagation.evaluate(ifStmt.getCondition(), constants.getInFact(ifStmt));
+            } else if (curr instanceof SwitchStmt switchStmt) {
+                val = constants.getInFact(switchStmt).get(switchStmt.getVar());
+            }
+
+            if (val.isConstant()) {
+                if (curr instanceof If) {
+                    Edge.Kind liveKind = (val.getConstant() != 0) ? Edge.Kind.IF_TRUE : Edge.Kind.IF_FALSE;
+                    for (Edge<Stmt> edge : outEdges) {
+                        if (edge.getKind() == Edge.Kind.IF_TRUE || edge.getKind() == Edge.Kind.IF_FALSE) {
+                            if (edge.getKind() == liveKind) {
+                                if (reachable.add(edge.getTarget())) {
+                                    queue.add(edge.getTarget());
+                                }
+                            }
+                        } else {
+                            if (reachable.add(edge.getTarget())) {
+                                queue.add(edge.getTarget());
+                            }
+                        }
+                    }
+                } else { // SwitchStmt
+                    int constVal = val.getConstant();
+                    boolean matched = false;
+                    for (Edge<Stmt> edge : outEdges) {
+                        if (edge.isSwitchCase()) {
+                            if (edge.getCaseValue() == constVal) {
+                                if (reachable.add(edge.getTarget())) {
+                                    queue.add(edge.getTarget());
+                                }
+                                matched = true;
+                            }
+                        } else if (!edge.isSwitchCase() && edge.getKind() != Edge.Kind.SWITCH_DEFAULT) {
+                            if (reachable.add(edge.getTarget())) {
+                                queue.add(edge.getTarget());
+                            }
+                        }
+                    }
+                    if (!matched) {
+                        for (Edge<Stmt> edge : outEdges) {
+                            if (edge.getKind() == Edge.Kind.SWITCH_DEFAULT) {
+                                if (reachable.add(edge.getTarget())) {
+                                    queue.add(edge.getTarget());
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                for (Edge<Stmt> edge : outEdges) {
+                    if (reachable.add(edge.getTarget())) {
+                        queue.add(edge.getTarget());
+                    }
+                }
+            }
+        }
+
+        // 2. Dead Code Collection
+        for (Stmt stmt : ir) {
+            if (!reachable.contains(stmt)) {
+                deadCode.add(stmt);
+            } else if (stmt instanceof AssignStmt<?, ?> assignStmt) {
+                LValue lValue = assignStmt.getLValue();
+                if (lValue instanceof Var var) {
+                    SetFact<Var> liveOut = liveVars.getOutFact(stmt);
+                    if (liveOut != null && !liveOut.contains(var) && hasNoSideEffect(assignStmt.getRValue())) {
+                        deadCode.add(stmt);
+                    }
+                }
+            }
+        }
         return deadCode;
     }
 

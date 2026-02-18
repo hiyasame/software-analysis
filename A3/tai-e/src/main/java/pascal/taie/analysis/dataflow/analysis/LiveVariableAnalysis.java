@@ -47,24 +47,46 @@ public class LiveVariableAnalysis extends
 
     @Override
     public SetFact<Var> newBoundaryFact(CFG<Stmt> cfg) {
-        // TODO - finish me
-        return null;
+        return new SetFact<>();
     }
 
     @Override
     public SetFact<Var> newInitialFact() {
-        // TODO - finish me
-        return null;
+        return new SetFact<>();
     }
 
     @Override
     public void meetInto(SetFact<Var> fact, SetFact<Var> target) {
-        // TODO - finish me
+        target.union(fact);
     }
 
     @Override
-    public boolean transferNode(Stmt stmt, SetFact<Var> in, SetFact<Var> out) {
-        // TODO - finish me
-        return false;
+    public boolean transferNode(Stmt stmt, SetFact<Var> out, SetFact<Var> in) {
+        SetFact<Var> newIn = out.copy();
+        // IN = USE U (OUT - DEF)
+        // 1. KILL DEF
+        stmt.getDef().ifPresent(def -> {
+            if (def instanceof Var var) {
+                newIn.remove(var);
+            }
+        });
+        // 2. ADD USE
+        for (pascal.taie.ir.exp.RValue use : stmt.getUses()) {
+            addVars(use, newIn);
+        }
+        boolean changed = !in.equals(newIn);
+        if (changed) {
+            in.set(newIn);
+        }
+        return changed;
+    }
+
+    private void addVars(pascal.taie.ir.exp.Exp exp, SetFact<Var> result) {
+        if (exp instanceof Var var) {
+            result.add(var);
+        }
+        for (pascal.taie.ir.exp.RValue use : exp.getUses()) {
+            addVars(use, result);
+        }
     }
 }
