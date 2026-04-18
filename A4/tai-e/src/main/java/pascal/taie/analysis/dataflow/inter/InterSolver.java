@@ -24,8 +24,10 @@ package pascal.taie.analysis.dataflow.inter;
 
 import pascal.taie.analysis.dataflow.fact.DataflowResult;
 import pascal.taie.analysis.graph.icfg.ICFG;
+import pascal.taie.analysis.graph.icfg.ICFGEdge;
 import pascal.taie.util.collection.SetQueue;
 
+import java.util.ArrayDeque;
 import java.util.Queue;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -59,10 +61,30 @@ class InterSolver<Method, Node, Fact> {
     }
 
     private void initialize() {
-        // TODO - finish me
+        workList = new ArrayDeque<>();
+        icfg.getNodes().forEach(node -> {
+            result.setInFact(node, analysis.newInitialFact());
+            result.setOutFact(node, analysis.newInitialFact());
+            workList.add(node);
+        });
+        icfg.entryMethods().forEach(method -> {
+            Node entry = icfg.getEntryOf(method);
+            result.setInFact(entry, analysis.newBoundaryFact(entry));
+        });
     }
 
     private void doSolve() {
-        // TODO - finish me
+        while (!workList.isEmpty()) {
+            Node node = workList.poll();
+            for (ICFGEdge<Node> inEdge : icfg.getInEdgesOf(node)) {
+                Fact edgeFact = analysis.transferEdge(inEdge, result.getOutFact(inEdge.getSource()));
+                analysis.meetInto(edgeFact, result.getInFact(node));
+            }
+
+            if (analysis.transferNode(node, result.getInFact(node), result.getOutFact(node))) {
+                // changed，将后继节点全部加入 worklist
+                icfg.getOutEdgesOf(node).forEach(e -> workList.add(e.getTarget()));
+            }
+        }
     }
 }

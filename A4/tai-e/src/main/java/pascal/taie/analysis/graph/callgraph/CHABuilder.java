@@ -54,6 +54,8 @@ class CHABuilder implements CGBuilder<Invoke, JMethod> {
             JMethod m = worklist.remove(0);
             if (!reachingMethod.contains(m)) {
                 reachingMethod.add(m);
+                if (m.isAbstract()) continue; // abstract 方法没有 IR，不加入 reachable，跳过
+                callGraph.addReachableMethod(m);
                 m.getIR().getStmts().stream()
                         .filter(stmt -> stmt instanceof Invoke)
                         .map(stmt -> (Invoke) stmt)
@@ -65,7 +67,6 @@ class CHABuilder implements CGBuilder<Invoke, JMethod> {
                         });
             }
         }
-
         return callGraph;
     }
 
@@ -76,25 +77,27 @@ class CHABuilder implements CGBuilder<Invoke, JMethod> {
         Set<JMethod> t = new HashSet<>();
         MethodRef methodRef = callSite.getMethodRef();
         if (callSite.isStatic()) {
-            t.add(methodRef.resolve());
+            JMethod m = dispatch(methodRef.getDeclaringClass(), methodRef.getSubsignature());
+            if (m != null) t.add(m);
         }
         if (callSite.isSpecial()) {
             JMethod dispatch = dispatch(methodRef.getDeclaringClass(), methodRef.getSubsignature());
-            if (dispatch != null) {
-                t.add(dispatch);
-            }
+            if (dispatch != null) t.add(dispatch);
         }
-        if (callSite.isVirtual()) {
+        if (callSite.isVirtual() || callSite.isInterface()) {
             JClass declaringClass = methodRef.getDeclaringClass();
             Queue<JClass> queue = new ArrayDeque<>();
             queue.add(declaringClass);
             while (!queue.isEmpty()) {
                 JClass c = queue.poll();
                 JMethod m = dispatch(c, methodRef.getSubsignature());
-                if (m != null) {
-                    t.add(m);
-                }
+                if (m != null) t.add(m);
                 queue.addAll(hierarchy.getDirectSubclassesOf(c));
+                // interface 还需要遍历直接实现类和子接口
+                if (c.isInterface()) {
+                    queue.addAll(hierarchy.getDirectImplementorsOf(c));
+                    queue.addAll(hierarchy.getDirectSubinterfacesOf(c));
+                }
             }
         }
         return t;
@@ -108,7 +111,7 @@ class CHABuilder implements CGBuilder<Invoke, JMethod> {
      */
     private JMethod dispatch(JClass jclass, Subsignature subsignature) {
         JMethod declaredMethod = jclass.getDeclaredMethod(subsignature);
-        if (declaredMethod != null) {
+        if (declaredMethod != null && !declaredMethod.isAbstract()) {
             return declaredMethod;
         }
         JClass superClass = jclass.getSuperClass();
